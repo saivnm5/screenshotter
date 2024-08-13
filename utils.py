@@ -43,7 +43,7 @@ def extract_frames(video_path, output_dir, num_screenshots, total_frames, frame_
         if frame_count % frame_interval == 0 and saved_frame_count < num_screenshots:
             frame_filename = os.path.join(
                 output_dir, 
-                f"{subfolder_name}_{os.path.splitext(os.path.basename(video_path))[0]}_frame_{saved_frame_count:04d}.jpg"
+                f"{os.path.splitext(os.path.basename(video_path))[0]} | frame-{saved_frame_count:04d}.jpg"
             )
             # Save the frame with the highest quality
             cv2.imwrite(frame_filename, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
