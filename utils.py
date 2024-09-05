@@ -1,73 +1,95 @@
+# utils.py
+
 import os
 import subprocess
+import re
 
 def get_video_duration_and_frames(video_path):
-    """Get the duration and total frames of a video using ffmpeg."""
+    """Get the duration and total frames of a video using FFmpeg."""
+    command = [
+        'ffmpeg', 
+        '-i', video_path,
+        '-hide_banner'
+    ]
+    
     try:
-        # Run ffmpeg to get video duration and frame count
-        result = subprocess.run(
-            [
-                "ffprobe", 
-                "-v", "error", 
-                "-select_streams", "v:0", 
-                "-show_entries", "stream=duration,nb_frames", 
-                "-of", "default=noprint_wrappers=1:nokey=1", 
-                video_path
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        result = subprocess.run(command, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        stderr_output = result.stderr
 
-        output = result.stdout.splitlines()
-        if len(output) >= 2:
-            duration = float(output[0])
-            total_frames = int(output[1])
-            return duration, total_frames
+        # Extract duration
+        duration_match = re.search(r"Duration: (\d+:\d+:\d+\.\d+)", stderr_output)
+        if duration_match:
+            duration_str = duration_match.group(1)
+            time_parts = duration_str.split(':')
+            
+            hours = int(time_parts[0])
+            minutes = int(time_parts[1])
+            seconds_and_ms = float(time_parts[2])
+            
+            # Calculate total duration in seconds
+            duration = hours * 3600 + minutes * 60 + seconds_and_ms
         else:
-            print(f"Error: Could not retrieve duration and frame count for {video_path}")
+            print(f"Error: Could not find the duration of {video_path}")
             return None, None
+        
+        # Extract fps
+        fps_match = re.search(r"(\d+(\.\d+)?) fps", stderr_output)
+        if fps_match:
+            fps = float(fps_match.group(1))
+        else:
+            print(f"Error: Could not find fps for {video_path}")
+            return None, None
+        
+        # Calculate total frames
+        total_frames = int(duration * fps)
+
+        return duration, total_frames
 
     except Exception as e:
-        print(f"Error while processing {video_path}: {e}")
+        print(f"Error while processing {video_path}: {str(e)}")
         return None, None
 
-def extract_frames(video_path, output_dir, num_screenshots, total_frames, max_screenshots, subfolder_name):
-    """Extract frames from a video using ffmpeg and save them as images."""
+
+def extract_frames(video_path, output_dir, num_screenshots, total_frames, frame_interval, subfolder_name):
+    """Extract frames from a video using FFmpeg and save them as images."""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    video_filename = os.path.splitext(os.path.basename(video_path))[0]
-    output_pattern = os.path.join(output_dir, f"{video_filename}_frame-%04d.jpg")
+    saved_frame_count = 0
+    print(f"Processing video: {video_path}")
+    print(f"Extracting {num_screenshots} screenshots...")
 
-    # Calculate the actual number of screenshots we can take
-    screenshots_to_take = min(num_screenshots, max_screenshots)
-
-    if screenshots_to_take == 0:
-        print(f"No screenshots to take for {video_filename}")
+    # Calculate the time interval for screenshots based on the total frames and desired number
+    duration, _ = get_video_duration_and_frames(video_path)
+    if duration is None:
         return 0
 
-    # Calculate the frame interval to achieve the desired number of screenshots
-    frame_interval = max(1, total_frames // screenshots_to_take)
+    for i in range(num_screenshots):
+        # Calculate the timestamp for the current frame based on the interval
+        timestamp = i * (duration / num_screenshots)
 
-    # Use ffmpeg to extract frames at the calculated interval
-    try:
+        # Create a unique filename for each frame to avoid overwriting
+        frame_filename = os.path.join(
+            output_dir, 
+            f"{os.path.splitext(os.path.basename(video_path))[0]}_frame_{i:04d}.jpg"
+        )
+
+        # Use FFmpeg to extract a frame at the calculated timestamp
         command = [
-            "ffmpeg",
-            "-i", video_path,
-            "-vf", f"select=not(mod(n\\,{frame_interval}))",
-            "-vsync", "vfr",
-            "-q:v", "2",  # Highest quality JPEG
-            output_pattern
+            'ffmpeg', '-ss', str(timestamp),
+            '-i', video_path,
+            '-frames:v', '1',  # Extract only 1 frame
+            '-q:v', '2',  # High-quality image (lower q means higher quality in FFmpeg)
+            frame_filename,
+            '-hide_banner', '-loglevel', 'error'
         ]
 
-        subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print(f"Extracted up to {screenshots_to_take} frames for {video_filename}")
+        try:
+            subprocess.run(command, check=True)
+            saved_frame_count += 1
+        except subprocess.CalledProcessError as e:
+            print(f"Error while extracting frame at {timestamp}s: {str(e)}")
+            break
 
-        # Count how many frames were saved
-        saved_frame_count = len([name for name in os.listdir(output_dir) if name.startswith(video_filename)])
-        return min(saved_frame_count, screenshots_to_take)
-
-    except Exception as e:
-        print(f"Error while extracting frames from {video_path}: {e}")
-        return 0
+    print(f"Saved {saved_frame_count} frames from {video_path} to {output_dir}")
+    return saved_frame_count
